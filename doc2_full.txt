@@ -1,0 +1,94 @@
+Propuesta de Arquitectura: Motor de Flujos para WhatsApp API
+Desarrollo de plataforma "No-Code" orientada a la atención automatizada en WhatsApp para empresa de seguros.
+1. Stack Tecnológico Propuesto (Escalable y Moderno)
+Backend (Motor Webhook y API): Node.js con NestJS o Fastify (TypeScript). Ideales para manejar la concurrencia asíncrona de webhooks de Meta.
+Base de Datos Relacional: PostgreSQL (recomendado sobre Supabase). Uso de columnas JSONB para flujos dinámicos y pgvector a futuro.
+Caché y Cola de Tareas: Redis. Fundamental para estado efímero de sesión y encolar webhooks.
+Panel de Administración (Frontend): React o Next.js.
+Librería Visual (Canvas): React Flow. Estándar para constructores visuales drag-and-drop.
+Infraestructura: Contenedores Docker orquestados mediante docker-compose en VPS Linux Ubuntu, con proxy inverso (Nginx/Traefik).
+2. Diseño Funcional del Panel de Administración
+Lienzo de Nodos (Canvas): Interfaz gráfica para arrastrar componentes (Mensaje, Lista, Botones, Input, API, Handoff).
+Configurador lateral: Panel derecho para llenar contenido del nodo seleccionado (textos, variables).
+Control de Versiones y Drafts: Estados de Borrador y Publicado para no afectar el bot en vivo al editar.
+Simulador Integrado: Chat de prueba lateral para validar el flujo antes de producción.
+3. Arquitectura Interna del Backend
+Webhook Receiver: Endpoint POST expuesto a Meta, valida token y empuja a Cola de Redis (BullMQ), respondiendo HTTP 200 rápido.
+Worker (Flow Engine): Consume mensajes de la cola.
+Gestor de Sesión: Consulta Redis. Si no existe, inicia sesión en Nodo Inicial. Si existe, retoma en el nodo actual.
+Evaluador de Reglas (DAG Executor): Evalúa conexiones (Edges), avanza el puntero, guarda estado y ejecuta acción en API WhatsApp.
+4. Modelo de Datos en PostgreSQL
+flows: id, name, version, is_active, published_json (árbol completo en JSONB).
+contacts: id, phone_number, name, created_at.
+sessions: id, contact_id, current_flow_id, current_node_id, collected_data (JSONB), status.
+messages_log: id, session_id, sender, content, message_type, created_at.
+5. Cómo resolver las Derivaciones (Handoff)
+Derivación a Asesor Humano (vCard): El bot envía un contacto de WhatsApp (vCard) del ajustador de siniestros o ventas.
+Derivación por Correo: El motor extrae datos de la sesión y dispara un correo vía SMTP/API notificando a la sucursal.
+Toma de control (Inbox Handoff): Cambia estado a 'handed_off'. El bot se silencia y un operador humano responde desde una bandeja.
+6. Infraestructura Recomendada (100–1.000 conversaciones diarias)
+Servidor: VPS Ubuntu (2 vCPU, 4-8 GB RAM) capaz de manejar este tráfico sin latencia.
+Gestión de Procesos: Dockerizar PostgreSQL, Redis y Node.js. Posibilidad de añadir microservicio Python (RAG) en la misma red.
+Seguridad: Traefik o Nginx como proxy reverso para SSL (Let's Encrypt) y rate limiting.
+7. Requisitos No Negociables del Motor
+Idempotencia: Registrar IDs de mensajes para descartar duplicados enviados por Meta ante reintentos.
+Respuesta sub-3 segundos: Responder HTTP 200 inmediatamente a Meta usando la cola de Redis.
+Timeout de Sesión: TTL de 24 horas en Redis. Tras inactividad, devolver al usuario al Menú Principal.
+8. Plan de Desarrollo por Etapas (Prompts para IA)
+Fase 1 (Infraestructura y Webhooks): 'Actúa como arquitecto Node.js. Genera código para Fastify con endpoints GET (verificación) y POST (recepción, validación SHA256 y encolado en BullMQ, retorno HTTP 200).'
+Fase 2 (Motor DAG): 'Implementa en TypeScript un motor de evaluación. Dado un JSON de nodos y estado en Redis, procesa mensaje, encuentra regla, actualiza nodo y retorna payload.'
+Fase 3 (Panel Visual): 'Actúa como dev Frontend Next.js. Escribe base con React Flow para nodos custom (Mensaje, Opciones, Derivación), panel lateral editor y generación JSON del grafo.'
+Fase 4 (Base de Datos): 'Diseña esquema SQL PostgreSQL para flujos versionados, sesiones, historial y limpieza automática de inactivos.'
+Esta es una excelente iniciativa. Desarrollar un motor de flujos propio para una empresa de seguros te garantiza la propiedad del código, la privacidad absoluta de los datos (fundamental en este sector) y la flexibilidad de integrarlo con tus propios sistemas centrales.
+A continuación, presento la guía técnica y arquitectónica completa para construir esta plataforma "No-Code" orientada a la atención automatizada en WhatsApp.
+1. Stack Tecnológico Propuesto (Escalable y Moderno)
+Este stack está pensado para soportar concurrencia alta, latencia baja y permitir un desarrollo modular entre el motor y el panel visual.
+Backend (Motor Webhook y API): Node.js con NestJS o Fastify (TypeScript). Son ideales para manejar la concurrencia asíncrona que exigen los webhooks de Meta.
+Base de Datos Relacional: PostgreSQL (Altamente recomendado montarlo sobre Supabase). Postgres es vital porque usaremos columnas JSONB para guardar la estructura dinámica de los flujos y aprovechar pgvector en el futuro.
+Caché y Cola de Tareas: Redis. Fundamental para guardar el estado efímero de la sesión del usuario (en qué nodo del flujo está) y encolar los webhooks entrantes de Meta.
+Panel de Administración (Frontend): React o Next.js.
+Librería Visual (Canvas): React Flow. Es el estándar de la industria para construir constructores visuales de arrastrar y soltar (nodos y conexiones) sin reinventar la rueda.
+Infraestructura: Contenedores Docker orquestados mediante docker-compose en un VPS Linux Ubuntu, detrás de un proxy inverso (Nginx o Traefik).
+2. Diseño Funcional del Panel de Administración
+El objetivo es que los analistas de negocio de la aseguradora configuren los flujos sin tocar una línea de código.
+Lienzo de Nodos (Canvas): Interfaz gráfica donde se arrastran componentes.
+Tipos de Nodos: Mensaje de Texto, Opciones de Lista (List), Botones (Buttons), Input de Usuario (esperar texto), API Call (para validar una póliza externa), y Handoff (Derivación).
+Configurador lateral: Al hacer clic en un nodo, un panel derecho permite llenar el contenido (ej. el texto de la pregunta, los nombres de los botones, o la variable donde se guardará el carnet de identidad ingresado).
+Control de Versiones y Drafts: Los flujos deben tener un estado de "Borrador" y "Publicado". Guardar el lienzo no debe afectar el bot en vivo hasta que se presione "Publicar" (lo que congela el JSON del flujo en una versión nueva).
+Simulador Integrado: Un chat falso a un costado de la pantalla que permita probar el flujo configurado antes de mandarlo a producción.
+3. Arquitectura Interna del Backend
+El flujo de procesamiento debe estar desacoplado para asegurar que Meta siempre reciba una respuesta rápida.
+Webhook Receiver: Un endpoint POST expuesto a Meta. Cuando entra un mensaje, valida el token de seguridad y empuja el payload a una Cola de Redis (BullMQ), respondiendo HTTP 200 inmediatamente a Meta.
+Worker (Flow Engine): Consume el mensaje de la cola.
+Gestor de Sesión: Consulta en Redis el número de teléfono.
+Si no existe: Crea una sesión, busca el "Nodo Inicial" del flujo activo y lo ejecuta.
+Si existe: Identifica en qué nodo se quedó el usuario.
+Evaluador de Reglas (DAG Executor): Toma la respuesta del usuario, evalúa los "Edges" (las conexiones del nodo actual hacia otros nodos). Si la regla coincide (ej. el usuario eligió el Botón 2), avanza el puntero de la sesión al siguiente Nodo, guarda en Redis y ejecuta la acción en la API de WhatsApp.
+4. Modelo de Datos en PostgreSQL
+Diseñado para separar la configuración del motor de los datos transaccionales de los clientes.
+flows: id, name, version, is_active, published_json (Aquí se guarda el árbol entero en un objeto JSONB optimizado para lectura rápida).
+contacts: id, phone_number, name, created_at.
+sessions: id, contact_id, current_flow_id, current_node_id, collected_data (JSONB para guardar variables como CI, Número de Póliza), status (bot_active, handed_off, closed).
+messages_log: id, session_id, sender (user / bot), content, message_type, created_at.
+5. Cómo resolver las Derivaciones (Handoff)
+La derivación es un nodo especial en tu árbol (HandoffNode). Cuando el motor llega a este nodo, puede hacer tres cosas según cómo se configuró en el panel:
+Derivación a Asesor Humano (vCard): El bot responde con un mensaje tipo contacts enviando el contacto de WhatsApp del ajustador de siniestros o ventas.
+Derivación por Correo: El motor extrae los datos del collected_data de la sesión (ej. Nombre, CI, tipo de siniestro) y dispara una petición a un servicio SMTP o API (como Resend) para notificar a la sucursal. Al cliente le responde: "Hemos enviado tu requerimiento a la sucursal, te contactarán pronto".
+Toma de control (Inbox Handoff): El nodo cambia el status de la sesión en PostgreSQL de bot_active a handed_off. El motor ignora los siguientes mensajes de ese número. En el panel de administración, un operador ve la alerta, entra a una vista de chat y responde manualmente a través de la API.
+6. Infraestructura Recomendada (100–1.000 conversaciones diarias)
+Para este volumen, la arquitectura no necesita ser excesivamente compleja, pero sí sólida.
+Servidor: Un VPS Ubuntu de 2 vCPU y 4 GB a 8 GB de RAM es perfectamente capaz de manejar este tráfico sin latencia.
+Gestión de Procesos:
+Dockerizar la base de datos (PostgreSQL), Redis y la aplicación Node.js.
+Si utilizas un pipeline de IA paralelo en Python para extracción de documentos (RAG sobre pólizas en PDF), puedes levantarlo como un microservicio interno adicional en la misma red de Docker.
+Seguridad: Traefik o Nginx como proxy reverso para manejar el certificado SSL de Let's Encrypt (obligatorio para Meta) y aplicar limitación de tasa (rate limiting).
+7. Requisitos No Negociables del Motor
+Idempotencia: Si Meta falla en recibir tu HTTP 200, te enviará el mismo mensaje de WhatsApp repetidas veces. Tu backend debe registrar los IDs de mensajes procesados y descartar los duplicados; de lo contrario, el bot responderá 5 veces la misma pregunta al cliente.
+Respuesta sub-3 segundos: El Webhook debe responder a Meta antes de procesar la lógica de negocio. Para eso sirve la cola de Redis.
+Timeout de Sesión: Si el cliente deja de responder, la sesión en Redis debe tener un TTL (Time To Live) de, por ejemplo, 24 horas. Pasado este tiempo, si escribe, debe volver al Menú Principal automáticamente.
+8. Plan de Desarrollo por Etapas (Para pasar a un agente de IA)
+Puedes copiar y pegar cada uno de estos "Prompts" a tu agente de IA preferido para avanzar ordenadamente:
+Fase 1 (Infraestructura y Webhooks): "Actúa como un arquitecto Node.js. Genera el código para un servidor Fastify que exponga un endpoint GET para la verificación inicial de Meta Cloud API, y un endpoint POST que reciba mensajes entrantes, valide la firma SHA256 de Meta, y encole el payload en BullMQ retornando HTTP 200 inmediatamente."
+Fase 2 (Motor de Ejecución DAG): "Implementa en TypeScript un motor de evaluación de estados. Dado un JSON con una lista de nodos (id, tipo, respuestas esperadas) y un estado de sesión en Redis (current_node), escribe la lógica que procese el mensaje del usuario, encuentre la regla coincidente, actualice Redis con el 'next_node' y retorne el payload formateado que debe enviarse de vuelta a la API de WhatsApp."
+Fase 3 (Panel Visual con React Flow): "Actúa como desarrollador Frontend en Next.js. Escribe la estructura base usando React Flow para renderizar tres tipos de nodos custom: 'Nodo de Mensaje', 'Nodo de Opciones' y 'Nodo de Derivación'. Incluye un panel lateral que permita editar las propiedades del nodo seleccionado y generar un JSON consolidado del grafo."
+Fase 4 (Base de Datos e Historial): "Diseña el esquema SQL en PostgreSQL para un bot de flujos. Necesito las tablas para flujos versionados, sesiones activas, historial de mensajes y un procedimiento almacenado o trigger que pase las sesiones inactivas por más de 24 horas a estado 'cerrado'."

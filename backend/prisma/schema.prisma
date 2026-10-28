@@ -1,0 +1,317 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+// ==========================================
+// TENANCY & ORGANIZACIONES
+// ==========================================
+
+enum TenantStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model Tenant {
+  id        String       @id @default(uuid())
+  name      String
+  slug      String       @unique
+  status    TenantStatus @default(ACTIVE)
+  settings  Json         @default("{}") // Timezone, branding, default language, webhook secrets
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  members          TenantUser[]
+  whatsappAccounts WhatsAppAccount[]
+  flows            Flow[]
+  contacts         Contact[]
+  conversations    Conversation[]
+  messages         Message[]
+  integrations     Integration[]
+  auditLogs        AuditLog[]
+
+  @@map("tenants")
+}
+
+enum TenantRole {
+  OWNER
+  ADMIN
+  BUILDER
+  AGENT
+  VIEWER
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  avatarUrl    String?
+  isSuperAdmin Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenants             TenantUser[]
+  createdFlows        Flow[]         @relation("FlowCreator")
+  assignedConversations Conversation[] @relation("AssignedAgent")
+  auditLogs           AuditLog[]
+
+  @@map("users")
+}
+
+model TenantUser {
+  id        String     @id @default(uuid())
+  tenantId  String
+  userId    String
+  role      TenantRole @default(BUILDER)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@map("tenant_users")
+}
+
+// ==========================================
+// CANAL DE WHATSAPP (WABA)
+// ==========================================
+
+model WhatsAppAccount {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  name                 String   // Ej. "Atención Siniestros", "Ventas"
+  phoneNumberId        String   @unique // ID en Meta Cloud API
+  wabaId               String   // WhatsApp Business Account ID
+  displayPhoneNumber   String   // Ej. "+591 70000000"
+  accessTokenEncrypted String   // Token permanente del System User (AES-256)
+  webhookVerifyToken   String   // Token único para validar el webhook con Meta
+  isActive             Boolean  @default(true)
+  defaultFlowId        String?  // Flujo asignado por defecto a este número
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  defaultFlow   Flow?          @relation("DefaultAccountFlow", fields: [defaultFlowId], references: [id], onDelete: SetNull)
+  conversations Conversation[]
+
+  @@index([tenantId])
+  @@map("whatsapp_accounts")
+}
+
+// ==========================================
+// FLUJOS Y VERSIONES (NO-CODE DAG)
+// ==========================================
+
+enum VersionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model Flow {
+  id              String   @id @default(uuid())
+  tenantId        String
+  name            String
+  description     String?
+  triggerKeywords Json     @default("[]") // Lista de palabras clave que inician este flujo: ["hola", "siniestro"]
+  isActive        Boolean  @default(true)
+  activeVersionId String?  // ID de la versión actualmente en producción
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creator          User              @relation("FlowCreator", fields: [createdById], references: [id])
+  versions         FlowVersion[]
+  whatsappAccounts WhatsAppAccount[] @relation("DefaultAccountFlow")
+
+  @@index([tenantId])
+  @@map("flows")
+}
+
+model FlowVersion {
+  id            String        @id @default(uuid())
+  flowId        String
+  versionNumber Int
+  status        VersionStatus @default(DRAFT)
+  definition    Json          // Estructura completa del DAG (nodos, edges, validaciones)
+  changelog     String?
+  publishedAt   DateTime?
+  publishedById String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  flow          Flow           @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([flowId, versionNumber])
+  @@index([flowId, status])
+  @@map("flow_versions")
+}
+
+// ==========================================
+// CONTACTOS Y SESIONES CONVERSACIONALES
+// ==========================================
+
+model Contact {
+  id           String   @id @default(uuid())
+  tenantId     String
+  phoneNumber  String   // Formato E.164 (Ej. "59170000000")
+  name         String?
+  customFields Json     @default("{}") // Datos persistentes: CI, póliza, correo, etc.
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([tenantId, phoneNumber])
+  @@index([tenantId, phoneNumber])
+  @@map("contacts")
+}
+
+enum ConversationStatus {
+  BOT_ACTIVE
+  HANDED_OFF
+  CLOSED
+}
+
+model Conversation {
+  id                String             @id @default(uuid())
+  tenantId          String
+  whatsappAccountId String
+  contactId         String
+  flowVersionId     String?            // Versión inmutable del flujo que está ejecutando
+  currentNodeId     String?            // Puntero del nodo actual en el DAG
+  status            ConversationStatus @default(BOT_ACTIVE)
+  assignedAgentId   String?            // Agente humano si status = HANDED_OFF
+  variables         Json               @default("{}") // Datos capturados durante la sesión actual
+  lastMessageAt     DateTime           @default(now())
+  windowExpiresAt   DateTime           // lastMessageAt + 24 horas (Ventana de atención Meta)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsappAccount WhatsAppAccount @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  contact         Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  flowVersion     FlowVersion?    @relation(fields: [flowVersionId], references: [id], onDelete: SetNull)
+  assignedAgent   User?           @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  messages        Message[]
+
+  @@index([tenantId, status])
+  @@index([whatsappAccountId])
+  @@index([contactId])
+  @@map("conversations")
+}
+
+// ==========================================
+// HISTORIAL DE MENSAJES Y EVENTOS
+// ==========================================
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SenderType {
+  USER
+  BOT
+  AGENT
+  SYSTEM
+}
+
+enum MessageType {
+  TEXT
+  INTERACTIVE_BUTTON
+  INTERACTIVE_LIST
+  FLOW_RESPONSE
+  VCARD
+  IMAGE
+  DOCUMENT
+  AUDIO
+  LOCATION
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model Message {
+  id             String           @id @default(uuid())
+  tenantId       String
+  conversationId String
+  wamid          String?          // WhatsApp Message ID asignado por Meta (para idempotencia)
+  direction      MessageDirection
+  senderType     SenderType
+  senderId       String?          // ID del usuario si senderType = AGENT
+  type           MessageType      @default(TEXT)
+  content        Json             // Payload estructurado (texto, botones seleccionados, vCard, media URLs)
+  status         MessageStatus    @default(PENDING)
+  errorDetails   Json?            // Detalles de error devueltos por Meta si status = FAILED
+  createdAt      DateTime         @default(now())
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId])
+  @@index([wamid])
+  @@map("messages")
+}
+
+// ==========================================
+// INTEGRACIONES Y AUDITORÍA
+// ==========================================
+
+enum IntegrationType {
+  SMTP_EMAIL
+  GOOGLE_CALENDAR
+  OUTLOOK_CALENDAR
+  WEBHOOK_REST
+  CRM_CUSTOM
+}
+
+model Integration {
+  id              String          @id @default(uuid())
+  tenantId        String
+  name            String
+  type            IntegrationType
+  configEncrypted Json            // Credenciales, API keys y endpoints protegidos
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("integrations")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String
+  userId     String?
+  action     String   // Ej. "FLOW_PUBLISHED", "ACCOUNT_CONNECTED", "SETTINGS_UPDATED"
+  entityType String   // Ej. "FLOW", "CONVERSATION", "TENANT"
+  entityId   String?
+  details    Json     @default("{}")
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}

@@ -1,0 +1,12 @@
+# Forzar saltos de línea LF para scripts y código
+* text=auto eol=lf
+
+# Excepciones binarias
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.zip binary

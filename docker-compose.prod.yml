@@ -1,0 +1,109 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wsflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wsflow_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wsflow_prod_pass_2026_secure}
+      POSTGRES_DB: ${POSTGRES_DB:-wsflow_db}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wsflow_user} -d ${POSTGRES_DB:-wsflow_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wsflow-internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: wsflow-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wsflow-internal
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wsflow-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-wsflow_user}:${POSTGRES_PASSWORD:-wsflow_prod_pass_2026_secure}@postgres:5432/${POSTGRES_DB:-wsflow_db}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-wsflow_jwt_secret_prod_key_2026_secure_x9}
+      JWT_EXPIRES_IN: 7d
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-e184e62ff18751508db8c46522c7a7bd4c84db8990176d63d6b0b5711c1d48c9}
+      META_API_VERSION: ${META_API_VERSION:-v20.0}
+      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-wsflow_webhook_verify_token_secure_2026}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+    networks:
+      - wsflow-internal
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      # Router HTTP -> Redirect a HTTPS
+      - "traefik.http.routers.wsflow-backend-web.rule=Host(`wsflow.hostlapaz.com`) && (PathPrefix(`/api`) || PathPrefix(`/webhook`))"
+      - "traefik.http.routers.wsflow-backend-web.entrypoints=web"
+      - "traefik.http.routers.wsflow-backend-web.middlewares=redirect-to-https@file"
+      # Router HTTPS con certificado Let's Encrypt
+      - "traefik.http.routers.wsflow-backend-websecure.rule=Host(`wsflow.hostlapaz.com`) && (PathPrefix(`/api`) || PathPrefix(`/webhook`))"
+      - "traefik.http.routers.wsflow-backend-websecure.entrypoints=websecure"
+      - "traefik.http.routers.wsflow-backend-websecure.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.wsflow-backend-websecure.service=wsflow-backend-service"
+      - "traefik.http.services.wsflow-backend-service.loadbalancer.server.port=3000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: wsflow-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      # Router HTTP -> Redirect a HTTPS
+      - "traefik.http.routers.wsflow-frontend-web.rule=Host(`wsflow.hostlapaz.com`)"
+      - "traefik.http.routers.wsflow-frontend-web.entrypoints=web"
+      - "traefik.http.routers.wsflow-frontend-web.middlewares=redirect-to-https@file"
+      # Router HTTPS con certificado Let's Encrypt
+      - "traefik.http.routers.wsflow-frontend-websecure.rule=Host(`wsflow.hostlapaz.com`)"
+      - "traefik.http.routers.wsflow-frontend-websecure.entrypoints=websecure"
+      - "traefik.http.routers.wsflow-frontend-websecure.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.wsflow-frontend-websecure.service=wsflow-frontend-service"
+      - "traefik.http.services.wsflow-frontend-service.loadbalancer.server.port=80"
+
+volumes:
+  postgres_prod_data:
+    driver: local
+  redis_prod_data:
+    driver: local
+
+networks:
+  wsflow-internal:
+    driver: bridge
+  dokploy-network:
+    external: true

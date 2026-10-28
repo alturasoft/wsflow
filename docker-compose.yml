@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wsflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wsflow_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wsflow_secure_password_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-wsflow_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wsflow_user} -d ${POSTGRES_DB:-wsflow_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: wsflow-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: wsflow-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-wsflow_user}:${POSTGRES_PASSWORD:-wsflow_secure_password_2026}@postgres:5432/${POSTGRES_DB:-wsflow_db}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      META_API_VERSION: ${META_API_VERSION:-v20.0}
+      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-wsflow_webhook_verify_token_secure_2026}
+      META_APP_SECRET: ${META_APP_SECRET:-your_meta_app_secret_here}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

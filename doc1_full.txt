@@ -1,0 +1,182 @@
+ARQUITECTURA RECOMENDADA
+Chatbot de WhatsAppcon editor visual de flujos
+Propuesta de arquitectura, tecnologías y componentes
+Modalidad
+Aplicación propia, desarrollada desde cero
+Volumen inicial
+100 a 1.000 conversaciones diarias
+Administración
+Panel visual editable sin programar
+Documento de diseño técnico
+Resumen ejecutivo
+Se recomienda construir una plataforma web propia de chatbot visual para WhatsApp, con un motor conversacional determinístico y un panel que permita diseñar, modificar, probar y publicar flujos sin editar código. La solución utilizará la API oficial de WhatsApp Cloud API y una arquitectura modular, escalable y mantenible.
+La decisión arquitectónica principal es separar el motor de ejecución —responsable de procesar mensajes y resolver las transiciones— del panel de administración —responsable de la edición visual de los flujos—. Así se podrán modificar los recorridos sin volver a desplegar el backend cada vez.
+1. Stack tecnológico propuesto
+Capa
+Tecnología
+Responsabilidad
+Canal de mensajería
+WhatsApp Cloud API oficial
+Enviar y recibir mensajes mediante la plataforma de Meta.
+Backend
+Node.js + TypeScript + NestJS
+API, lógica de negocio, seguridad y módulos del sistema.
+Motor conversacional
+Módulo propio de ejecución de flujos
+Resolver preguntas, condiciones, variables y destinos.
+Panel web
+React + TypeScript
+Administración de flujos, usuarios, configuraciones y estadísticas.
+Editor visual
+React Flow (@xyflow/react)
+Diseñar flujos mediante nodos y conexiones.
+Base de datos
+PostgreSQL
+Persistir flujos, versiones, conversaciones, mensajes y auditoría.
+Acceso a datos
+Prisma ORM
+Consultas tipadas y gestión de migraciones.
+Cola de trabajos
+Redis + BullMQ
+Procesamiento asíncrono, reintentos y gestión de trabajos.
+Integraciones
+Adaptadores propios
+Correo, CRM, otros sistemas y atención humana.
+Despliegue
+Docker + Nginx o proxy HTTPS equivalente
+Publicación y operación de la aplicación.
+React Flow encaja con un editor visual basado en nodos y conexiones. NestJS puede integrarse con BullMQ para trabajos asíncronos, mientras que Prisma facilita el acceso tipado a PostgreSQL.
+No se recomienda incorporar un modelo de lenguaje (LLM) como componente obligatorio en la primera versión. Para un bot basado en opciones, el motor debe ser determinístico: cada respuesta conduce a una transición configurada. La IA puede añadirse posteriormente para interpretar preguntas libres.
+2. Diseño funcional del panel de administración
+El panel debe permitir que personas no técnicas creen, conecten, validen, prueben y publiquen flujos. El administrador selecciona un nodo, configura sus propiedades y conecta sus salidas con otros nodos mediante el editor visual.
+2.1 Tipos de nodos
+Nodo
+Configuración / función
+Inicio
+Mensaje inicial y punto de entrada del flujo.
+Mensaje
+Texto, encabezado y pie opcional.
+Menú
+Opciones, identificadores y destinos de cada selección.
+Captura de dato
+Recoger texto, correo, número u otro dato.
+Condición
+Evaluar comparaciones entre variables.
+WhatsApp Flow
+Invocar un formulario oficial cuando corresponda.
+Acción
+Ejecutar una integración autorizada.
+Derivación
+Enviar a un contacto, correo, otro WhatsApp o agente.
+Espera
+Continuar cuando llegue un nuevo mensaje.
+Fin
+Cerrar el recorrido o mostrar el mensaje final.
+2.2 Publicación y validación
+Detectar nodos desconectados, destinos inválidos, referencias rotas y ramas sin salida.
+Permitir probar el flujo antes de publicarlo.
+Mantener versiones publicadas inmutables para no alterar conversaciones activas.
+Guardar las definiciones como JSON validado por un esquema; no ejecutar JavaScript arbitrario desde los flujos.
+Se recomienda guardar la definición del flujo en documentos JSON asociados a versiones, mientras que las conversaciones, los mensajes y los eventos se conservan en tablas relacionales.
+3. Arquitectura interna del backend
+El backend se organizará como una aplicación NestJS modular. No se recomienda comenzar con microservicios: para el volumen inicial añadirían complejidad operativa sin una necesidad demostrada.
+Componente
+Responsabilidad
+1. Adaptador de WhatsApp
+Recibir webhooks, validar la firma, normalizar eventos y confirmar recepción.
+2. Cola de eventos
+Redis + BullMQ para reintentos y procesamiento asíncrono.
+3. Orquestador conversacional
+Identificar la conversación, cargar el estado y procesar la selección.
+4. Motor de reglas
+Evaluar el flujo publicado, las condiciones y el siguiente nodo.
+5. Persistencia
+Guardar estados, variables, respuestas, mensajes y eventos.
+6. Adaptadores de salida
+Enviar mensajes de WhatsApp, correos y solicitudes a integraciones externas.
+3.1 Secuencia de procesamiento
+Meta envía el evento al webhook HTTPS.
+El backend verifica la autenticidad de la solicitud y registra el identificador del mensaje.
+La cola procesa el evento sin bloquear la recepción de otros mensajes.
+El motor identifica al usuario y carga su conversación y la versión del flujo correspondiente.
+Evalúa la selección, actualiza las variables y determina el siguiente nodo.
+El adaptador envía el mensaje correspondiente mediante la API oficial.
+Se registran el resultado del envío y las notificaciones posteriores de entrega o error.
+La idempotencia es fundamental: si Meta reenvía un evento, el sistema no debe ejecutar dos veces la misma acción ni enviar respuestas duplicadas. También debe controlar el orden de los mensajes de una misma conversación.
+4. Modelo de datos en PostgreSQL
+Tabla
+Contenido
+users
+Usuarios del panel y sus roles.
+whatsapp_accounts
+Referencias de WABA, número, configuración y credenciales protegidas.
+flows
+Nombre, descripción y estado del flujo.
+flow_versions
+Versiones publicadas e historial de cambios.
+flow_nodes
+Tipos de nodo y configuración.
+flow_edges
+Conexiones y condiciones de transición.
+contacts
+Número de WhatsApp e información del contacto.
+conversations
+Estado actual, flujo y versión utilizada.
+conversation_messages
+Mensajes entrantes y salientes.
+conversation_variables
+Datos capturados durante la conversación.
+message_events
+Eventos procesados y control de duplicados.
+integrations
+Configuración de correo, CRM y destinos.
+audit_logs
+Cambios de configuración y publicaciones.
+Aunque los nodos y conexiones pueden almacenarse como JSON dentro de flow_versions, se recomienda mantener las conversaciones, los mensajes y los eventos en tablas relacionales para facilitar consultas, estadísticas, investigación de errores y recuperación del estado.
+5. Gestión de las derivaciones
+5.1 Correo electrónico
+Enviar el resumen de la consulta y los datos autorizados al correo del área correspondiente. Utilizar SMTP o un servicio de correo transaccional, con reintentos y registro del resultado.
+5.2 Otro número de WhatsApp
+Proporcionar un enlace wa.me al número de destino. El usuario pulsa el enlace para abrir el otro chat. Esto no transfiere automáticamente el historial ni la sesión.
+5.3 Agente humano
+Si una persona debe continuar atendiendo desde una bandeja de entrada, se requiere integrar un sistema de atención humana o desarrollar un módulo propio con asignación, estados y mensajes entrantes y salientes.
+La implementación debe respetar las reglas de Meta para la atención automatizada, las vías de escalamiento cuando correspondan, la ventana de atención de 24 horas y el uso de plantillas aprobadas para mensajes enviados fuera de esa ventana.
+6. Infraestructura recomendada
+Componente
+Recomendación inicial
+Servidor de aplicación
+VPS de referencia: 2–4 vCPU y 4–8 GB de RAM para empezar; validar mediante pruebas de carga.
+Aplicación
+Backend NestJS, workers y frontend web en contenedores Docker.
+PostgreSQL
+Base persistente con copias de seguridad automatizadas; considerar servicio administrado o servidor separado.
+Redis + BullMQ
+Cola de tareas, reintentos y procesamiento de eventos; permitir aumentar workers si crece la carga.
+Seguridad y observabilidad
+HTTPS, secretos protegidos, roles, registros estructurados, métricas, alertas y pruebas de restauración.
+El dimensionamiento definitivo depende de los picos de mensajes, las integraciones y los datos almacenados, no solamente del número diario de conversaciones. Antes de producción se deben probar la concurrencia, los tiempos de respuesta, la recuperación de la cola y los errores de la API.
+7. Requisitos no negociables del motor de flujos
+Versionado inmutable: una versión nueva no modifica la versión utilizada por conversaciones activas.
+Validación previa: impedir publicar flujos con nodos desconectados, destinos inválidos, referencias rotas o ramas sin salida.
+Control de estado: almacenar el nodo actual, las variables capturadas y la última actividad.
+Recuperación: permitir retomar conversaciones después de reinicios del backend.
+Reintentos seguros: evitar duplicados y controlar errores temporales de Meta y servicios externos.
+Controles de usuario: volver al menú principal, reiniciar el recorrido o solicitar atención humana.
+Seguridad: validar webhooks, proteger credenciales, limitar permisos y evitar la ejecución de código arbitrario.
+Pruebas de flujo: simular conversaciones antes de publicar y registrar el recorrido de cada usuario.
+8. Plan de desarrollo por etapas
+Fundación técnica: Configurar Meta, webhook, envío y recepción de mensajes, PostgreSQL, autenticación y estructura del proyecto.
+Motor conversacional: Implementar menús, preguntas, condiciones, variables, persistencia del estado y manejo de errores.
+Panel visual: Construir el editor React Flow, formularios de propiedades, validaciones y versionado.
+Integraciones y derivaciones: Implementar correo, enlaces a otros chats y, si corresponde, una bandeja de atención humana.
+Pruebas y producción: Probar conversaciones simultáneas, duplicados, desconexiones, límites de API, seguridad y recuperación de fallos.
+9. Recomendación final
+Desarrollar una plataforma propia de chatbot visual con React + React Flow en el frontend; NestJS + TypeScript en el backend; PostgreSQL para los datos y las versiones; Redis + BullMQ para el procesamiento asíncrono; y WhatsApp Cloud API como canal oficial.
+Esta arquitectura es adecuada para el volumen inicial y permite evolucionar hacia múltiples empresas, múltiples números de WhatsApp, plantillas de flujos reutilizables, estadísticas y un modelo SaaS comercial.
+Decisión estratégica pendiente: definir si el panel será para una sola organización o si varias empresas crearán y administrarán sus propios bots desde la misma plataforma. En el segundo caso, se debe diseñar desde el principio el aislamiento de datos, los permisos y la configuración por cliente.
+Referencias técnicas oficiales
+WhatsApp Cloud API: https://developers.facebook.com/docs/whatsapp/cloud-api/overview
+WhatsApp Flows: https://developers.facebook.com/docs/whatsapp/flows
+React Flow: https://reactflow.dev/
+NestJS Queues: https://docs.nestjs.com/techniques/queues
+Prisma ORM: https://www.prisma.io/docs

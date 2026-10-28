@@ -1,0 +1,244 @@
+:root {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'Outfit', sans-serif;
+
+  /* Color Palette - Premium Dark Theme */
+  --bg-dark: #0a0e17;
+  --bg-card: #121826;
+  --bg-card-hover: #1a2236;
+  --bg-surface: #1e293b;
+  --bg-sidebar: #0f172a;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-active: rgba(16, 185, 129, 0.5);
+
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+
+  --wa-green: #25d366;
+  --wa-green-dark: #128c7e;
+  --wa-green-glow: rgba(37, 211, 102, 0.25);
+
+  --accent-cyan: #06b6d4;
+  --accent-blue: #3b82f6;
+  --accent-purple: #8b5cf6;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+
+  --shadow-node: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  --shadow-active: 0 0 20px var(--wa-green-glow);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  font-family: var(--font-sans);
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, .brand-font {
+  font-family: var(--font-heading);
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* React Flow Custom Overrides */
+.react-flow__background {
+  background-color: var(--bg-dark);
+}
+
+.react-flow__controls {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--shadow-node) !important;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: var(--bg-card) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  color: var(--text-main) !important;
+  fill: var(--text-main) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--bg-card-hover) !important;
+}
+
+.react-flow__minimap {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--shadow-node) !important;
+}
+
+.react-flow__edge-path {
+  stroke: #475569 !important;
+  stroke-width: 2.5 !important;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--wa-green) !important;
+  stroke-width: 3.5 !important;
+}
+
+/* Custom Handles */
+.custom-handle {
+  width: 10px !important;
+  height: 10px !important;
+  background: #3b82f6 !important;
+  border: 2px solid #ffffff !important;
+  border-radius: 50% !important;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.custom-handle:hover {
+  transform: scale(1.35);
+  background: var(--wa-green) !important;
+}
+
+.custom-handle-target {
+  background: #10b981 !important;
+}
+
+.custom-handle-source {
+  background: #3b82f6 !important;
+}
+
+.custom-handle-error {
+  background: #f43f5e !important;
+}
+
+.custom-handle-success {
+  background: #10b981 !important;
+}
+
+/* Node Container Base */
+.flow-node-card {
+  min-width: 260px;
+  max-width: 320px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--shadow-node);
+  transition: all 0.2s ease;
+  overflow: visible;
+  backdrop-filter: blur(12px);
+}
+
+.flow-node-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.flow-node-card.selected {
+  border-color: var(--wa-green);
+  box-shadow: 0 0 25px var(--wa-green-glow), var(--shadow-node);
+}
+
+/* Node Header */
+.node-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.node-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+/* Node Body */
+.node-body {
+  padding: 12px 14px;
+  font-size: 0.825rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* Variable Pill */
+.var-tag {
+  display: inline-block;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.75rem;
+  margin: 1px;
+}
+
+/* WhatsApp Preview Bubble */
+.wa-bubble {
+  background: #1f2c34;
+  color: #e9edef;
+  border-radius: 8px 8px 8px 0;
+  padding: 8px 12px;
+  position: relative;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  margin-top: 6px;
+  border-left: 3px solid var(--wa-green);
+}
+
+/* Button Options Preview */
+.wa-btn-preview {
+  background: #2a3942;
+  color: #00a884;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Animations */
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.pulse-glow {
+  animation: pulseGlow 2s infinite ease-in-out;
+}
