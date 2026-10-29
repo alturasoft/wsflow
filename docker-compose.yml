@@ -32,12 +32,24 @@ services:
       timeout: 5s
       retries: 5
 
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    container_name: wsflow-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: wsflow-backend
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       postgres:
         condition: service_healthy
@@ -49,6 +61,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-wsflow_user}:${POSTGRES_PASSWORD:-wsflow_secure_password_2026}@postgres:5432/${POSTGRES_DB:-wsflow_db}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
       META_API_VERSION: ${META_API_VERSION:-v20.0}
       META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-wsflow_webhook_verify_token_secure_2026}
       META_APP_SECRET: ${META_APP_SECRET:-your_meta_app_secret_here}
@@ -60,4 +75,6 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  qdrant_data:
     driver: local

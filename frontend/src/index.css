@@ -147,7 +147,7 @@ h1, h2, h3, h4, .brand-font {
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   box-shadow: var(--shadow-node);
-  transition: all 0.2s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
   overflow: visible;
   backdrop-filter: blur(12px);
 }

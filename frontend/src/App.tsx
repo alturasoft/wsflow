@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ReactFlowProvider,
   useNodesState,
@@ -13,9 +13,13 @@ import { FlowCanvas } from './components/FlowCanvas';
 import { Simulator } from './components/Simulator';
 import { HumanInbox } from './components/HumanInbox';
 import { IntegrationsModal } from './components/IntegrationsModal';
+import { KnowledgeBaseModal } from './components/KnowledgeBaseModal';
 import { Flow, Tenant, NodeData } from './types/flow';
 import { getLayoutedElements } from './utils/autoLayout';
 import { API_BASE } from './config';
+import { authService, AuthSession } from './services/auth';
+import { LoginScreen } from './components/LoginScreen';
+import { TenantProfileModal } from './components/TenantProfileModal';
 
 // Flujo inicial de demostración (Insurance Bot)
 const INITIAL_NODES: Node[] = [
@@ -112,8 +116,14 @@ export function App() {
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
   const [isIntegrationsOpen, setIsIntegrationsOpen] = useState(false);
+  const [isKnowledgeOpen, setIsKnowledgeOpen] = useState(false);
+  const [isTenantProfileOpen, setIsTenantProfileOpen] = useState(false);
   const [activeView, setActiveView] = useState<'EDITOR' | 'INBOX'>('EDITOR');
   const [pendingHandoffCount, setPendingHandoffCount] = useState(0);
+
+  // Estado de Autenticación
+  const [authSession, setAuthSession] = useState<AuthSession | null>(authService.getSession());
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   const [flows, setFlows] = useState<Flow[]>([]);
   const [activeFlow, setActiveFlow] = useState<Flow | null>(null);
@@ -122,6 +132,9 @@ export function App() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const activeTenantRef = useRef<Tenant | null>(null);
+  activeTenantRef.current = activeTenant;
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -129,11 +142,14 @@ export function App() {
 
   // Cargar un flujo en el lienzo
   const applyFlowToCanvas = useCallback(
-    (flow: Flow) => {
+    (flow: Flow, tenantOverride?: Tenant | null) => {
       setActiveFlow(flow);
       setSelectedNode(null);
 
-      const isDefault = activeTenant?.whatsappAccounts?.[0]?.defaultFlowId === flow.id;
+      const currentTenant = tenantOverride !== undefined ? tenantOverride : activeTenantRef.current;
+      const isDefault = Boolean(
+        currentTenant?.whatsappAccounts?.some((acc) => acc.defaultFlowId === flow.id),
+      );
       const flowKeywords = Array.isArray(flow.triggerKeywords) ? flow.triggerKeywords : [];
       const version = flow.versions?.[0];
       if (version?.definition?.nodes && version.definition.nodes.length > 0) {
@@ -179,6 +195,7 @@ export function App() {
               label: 'Inicio del flujo',
               triggerKeywords: flowKeywords,
               triggerType: flowKeywords.length > 0 ? 'keywords' : 'all',
+              isDefaultFlow: isDefault,
             },
           },
         ]);
@@ -188,34 +205,142 @@ export function App() {
     [setNodes, setEdges],
   );
 
-  // Cargar datos de la API
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [tenantsRes, flowsRes, statsRes] = await Promise.all([
-          fetch(`${API_BASE}/tenants`).then((r) => r.json()),
-          fetch(`${API_BASE}/flows`).then((r) => r.json()),
-          fetch(`${API_BASE}/stats`).then((r) => r.json()),
+  // Función para cargar datos de la empresa activa
+  const loadTenantData = useCallback(async (tenant: any) => {
+    try {
+      const [flowsRes, statsRes] = await Promise.all([
+        authService.authFetch(`${API_BASE}/flows?tenantId=${tenant.id}`).then((r) => r.json()),
+        authService.authFetch(`${API_BASE}/stats?tenantId=${tenant.id}`).then((r) => r.json()),
+      ]);
+
+      if (statsRes?.handedOffSessions !== undefined) {
+        setPendingHandoffCount(statsRes.handedOffSessions);
+      }
+
+      setActiveTenant(tenant);
+
+      if (flowsRes && flowsRes.length > 0) {
+        setFlows(flowsRes);
+        applyFlowToCanvas(flowsRes[0], tenant);
+      } else {
+        setFlows([]);
+        setActiveFlow(null);
+        setNodes([
+          {
+            id: 'node_start',
+            type: 'start',
+            position: { x: 250, y: 60 },
+            data: {
+              label: 'Inicio del flujo',
+              triggerKeywords: ['hola'],
+              triggerType: 'keywords',
+              isDefaultFlow: true,
+            },
+          },
         ]);
+        setEdges([]);
+      }
+    } catch (err) {
+      console.warn('Error al cargar datos del inquilino:', err);
+    }
+  }, [applyFlowToCanvas, setNodes, setEdges]);
 
-        if (statsRes?.handedOffSessions !== undefined) {
-          setPendingHandoffCount(statsRes.handedOffSessions);
-        }
+  // Verificar sesión al montar (solo una vez)
+  useEffect(() => {
+    let isMounted = true;
+    async function verifyAuth() {
+      const session = await authService.getMe();
+      if (!isMounted) return;
+      setAuthSession(session);
+      setIsAuthChecking(false);
 
-        if (tenantsRes && tenantsRes.length > 0) {
-          setActiveTenant(tenantsRes[0]);
-        }
-
-        if (flowsRes && flowsRes.length > 0) {
-          setFlows(flowsRes);
-          applyFlowToCanvas(flowsRes[0]);
-        }
-      } catch (err) {
-        console.warn('API backend no disponible en primer intento, usando datos locales.');
+      if (session?.activeTenant) {
+        loadTenantData(session.activeTenant);
       }
     }
-    loadData();
-  }, [applyFlowToCanvas]);
+    verifyAuth();
+    return () => {
+      isMounted = false;
+    };
+  }, [loadTenantData]);
+
+  // Al iniciar sesión exitosamente
+  const handleLoginSuccess = (session: AuthSession) => {
+    setAuthSession(session);
+    loadTenantData(session.activeTenant);
+    showToast(`✓ ¡Bienvenido, ${session.user.name}!`);
+  };
+
+  // Cambiar de inquilino / empresa
+  const handleSwitchTenant = async (tenantId: string) => {
+    try {
+      const updatedSession = await authService.switchTenant(tenantId);
+      setAuthSession(updatedSession);
+      await loadTenantData(updatedSession.activeTenant);
+      showToast(`✓ Cambiaste a: ${updatedSession.activeTenant.name}`);
+    } catch (err: any) {
+      alert(`⚠️ ${err.message || 'No se pudo cambiar de empresa'}`);
+    }
+  };
+
+  // Cerrar Sesión
+  const handleLogout = () => {
+    authService.clearSession();
+    setAuthSession(null);
+    setFlows([]);
+    setActiveFlow(null);
+  };
+
+  // Actualizar modo operativo del inquilino (Activo / En Desarrollo / Inactivo)
+  const handleUpdateTenantStatus = async (operationalMode: 'ACTIVE' | 'DEVELOPMENT' | 'INACTIVE') => {
+    if (!activeTenant) return;
+    try {
+      const res = await authService.authFetch(`${API_BASE}/tenants/${activeTenant.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operationalMode }),
+      });
+      if (!res.ok) throw new Error('Error al actualizar estado del inquilino');
+
+      const updated = await res.json();
+      setActiveTenant(updated);
+
+      // Actualizar también en authSession
+      if (authSession) {
+        const updatedSession = {
+          ...authSession,
+          activeTenant: updated,
+          tenants: authSession.tenants.map((t) => (t.id === updated.id ? { ...t, ...updated } : t)),
+        };
+        authService.setSession(updatedSession as any);
+        setAuthSession(updatedSession as any);
+      }
+
+      const statusLabels = {
+        ACTIVE: 'Activo (En vivo)',
+        DEVELOPMENT: 'En Desarrollo (Pruebas)',
+        INACTIVE: 'Inactivo (Pausado)',
+      };
+      showToast(`⭐ Estado de empresa cambiado a: ${statusLabels[operationalMode]}`);
+    } catch (err: any) {
+      alert(`⚠️ ${err.message || 'No se pudo actualizar el estado'}`);
+    }
+  };
+
+  // Al guardar el perfil del inquilino desde el modal
+  const handleTenantUpdated = (updatedTenant: Tenant) => {
+    setActiveTenant(updatedTenant);
+    if (authSession) {
+      const updatedSession = {
+        ...authSession,
+        activeTenant: updatedTenant,
+        tenants: authSession.tenants.map((t) => (t.id === updatedTenant.id ? { ...t, ...updatedTenant } : t)),
+      };
+      authService.setSession(updatedSession as any);
+      setAuthSession(updatedSession as any);
+    }
+    showToast(`✓ Perfil de "${updatedTenant.name}" actualizado con éxito.`);
+  };
 
   // Cambiar entre flujos existentes
   const handleSelectFlow = (flowId: string) => {
@@ -228,7 +353,7 @@ export function App() {
 
   // Crear un nuevo flujo
   const handleCreateFlow = async (name: string, description?: string, triggerKeywords?: string[]) => {
-    const res = await fetch(`${API_BASE}/flows`, {
+    const res = await authService.authFetch(`${API_BASE}/flows`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -253,7 +378,7 @@ export function App() {
   // Eliminar un flujo existente
   const handleDeleteFlow = async (flowId: string) => {
     try {
-      const res = await fetch(`${API_BASE}/flows/${flowId}`, {
+      const res = await authService.authFetch(`${API_BASE}/flows/${flowId}`, {
         method: 'DELETE',
       });
       if (!res.ok) {
@@ -338,13 +463,28 @@ export function App() {
     }
     setIsSaving(true);
     try {
-      await fetch(`${API_BASE}/flows/${activeFlow.id}/draft`, {
+      const res = await authService.authFetch(`${API_BASE}/flows/${activeFlow.id}/draft`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           definition: { nodes, edges },
         }),
       });
+      if (res.ok) {
+        const savedDraft = await res.json();
+        setActiveFlow((prev) => {
+          if (!prev) return null;
+          const otherVersions = (prev.versions || []).filter((v) => v.id !== savedDraft.id);
+          return { ...prev, versions: [savedDraft, ...otherVersions] };
+        });
+        setFlows((prev) =>
+          prev.map((f) => {
+            if (f.id !== activeFlow.id) return f;
+            const otherVersions = (f.versions || []).filter((v) => v.id !== savedDraft.id);
+            return { ...f, versions: [savedDraft, ...otherVersions] };
+          }),
+        );
+      }
       showToast('✓ Borrador guardado exitosamente.');
     } catch (e) {
       showToast('Error guardando borrador en servidor.');
@@ -365,7 +505,7 @@ export function App() {
     setIsPublishing(true);
     try {
       if (activeFlow) {
-        const res = await fetch(`${API_BASE}/flows/${activeFlow.id}/publish`, {
+        const res = await authService.authFetch(`${API_BASE}/flows/${activeFlow.id}/publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -397,7 +537,7 @@ export function App() {
   const handleSetDefaultFlow = async () => {
     if (!activeFlow) return;
     try {
-      const res = await fetch(`${API_BASE}/flows/${activeFlow.id}/set-default?tenantId=${activeTenant?.id}`, {
+      const res = await authService.authFetch(`${API_BASE}/flows/${activeFlow.id}/set-default?tenantId=${activeTenant?.id}`, {
         method: 'PUT',
       });
       if (!res.ok) throw new Error('Error al establecer flujo');
@@ -465,6 +605,21 @@ export function App() {
     }
   };
 
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm">Verificando sesión...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authSession) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#0a0e17' }}>
       {/* Toast Notification */}
@@ -501,8 +656,8 @@ export function App() {
         flowName={activeFlow?.name || 'Atención General y Siniestros'}
         versionNumber={activeFlow?.versions?.[0]?.versionNumber || 1}
         status={activeFlow?.versions?.[0]?.status || 'PUBLISHED'}
-        tenantName={activeTenant?.name || 'Seguros Altura S.A.'}
-        phoneNumber={activeTenant?.whatsappAccounts?.[0]?.displayPhoneNumber || '+591 70000000'}
+        tenantName={activeTenant?.name || authSession.activeTenant?.name || 'Seguros Altura S.A.'}
+        phoneNumber={activeTenant?.whatsappAccounts?.[0]?.displayPhoneNumber || authSession.activeTenant?.whatsappAccounts?.[0]?.displayPhoneNumber || '+591 70000000'}
         activeView={activeView}
         onViewChange={(v) => setActiveView(v)}
         pendingHandoffCount={pendingHandoffCount}
@@ -511,8 +666,16 @@ export function App() {
         onValidate={handleValidateClick}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
         onOpenIntegrations={() => setIsIntegrationsOpen(true)}
+        onOpenKnowledge={() => setIsKnowledgeOpen(true)}
         isSaving={isSaving}
         isPublishing={isPublishing}
+        currentUser={authSession.user}
+        activeTenant={activeTenant}
+        tenants={authSession.tenants}
+        onOpenTenantProfile={() => setIsTenantProfileOpen(true)}
+        onUpdateTenantStatus={handleUpdateTenantStatus}
+        onSwitchTenant={handleSwitchTenant}
+        onLogout={handleLogout}
       />
 
       {/* Main Workspace: Alterna entre Editor Visual e Inbox Humano */}
@@ -541,7 +704,7 @@ export function App() {
               onUpdateNodeData={handleUpdateNodeData}
               onDeleteNode={handleDeleteNode}
               onClose={() => setSelectedNode(null)}
-              isDefaultFlow={activeTenant?.whatsappAccounts?.[0]?.defaultFlowId === activeFlow?.id}
+              isDefaultFlow={Boolean(activeTenant?.whatsappAccounts?.some((acc) => acc.defaultFlowId === activeFlow?.id))}
               onSetDefaultFlow={handleSetDefaultFlow}
               flowName={activeFlow?.name}
             />
@@ -562,6 +725,22 @@ export function App() {
         isOpen={isIntegrationsOpen}
         onClose={() => setIsIntegrationsOpen(false)}
         tenantId={activeTenant?.id}
+      />
+
+      {/* Modal de Base de Conocimiento RAG (Qdrant) */}
+      <KnowledgeBaseModal
+        isOpen={isKnowledgeOpen}
+        onClose={() => setIsKnowledgeOpen(false)}
+        tenantId={activeTenant?.id}
+        tenantName={activeTenant?.name}
+      />
+
+      {/* Modal de Configuración y Edición del Perfil del Inquilino */}
+      <TenantProfileModal
+        isOpen={isTenantProfileOpen}
+        onClose={() => setIsTenantProfileOpen(false)}
+        tenant={activeTenant}
+        onTenantUpdated={handleTenantUpdated}
       />
     </div>
   );

@@ -1162,6 +1162,153 @@ export const Inspector: React.FC<InspectorProps> = ({
           </div>
         )}
 
+        {/* NODO CONSULTA RAG / IA */}
+        {nodeType === 'rag_query' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div
+              style={{
+                background: 'rgba(168, 85, 247, 0.1)',
+                border: '1px solid rgba(168, 85, 247, 0.3)',
+                borderRadius: '8px',
+                padding: '10px 12px',
+                fontSize: '0.75rem',
+                color: '#cbd5e1',
+                lineHeight: 1.4,
+              }}
+            >
+              <span style={{ fontWeight: 700, color: '#c084fc', display: 'block', marginBottom: '4px' }}>
+                Base de Conocimiento Qdrant + IA
+              </span>
+              Permite a los usuarios hacer preguntas libres en WhatsApp o buscar en los PDFs corporativos cargados con respuestas oficiales.
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', marginBottom: '4px' }}>
+                Mensaje de Bienvenida al Asistente (Modo Interactivo)
+              </label>
+              <textarea
+                rows={2}
+                value={data.prompt || ''}
+                onChange={(e) => handleChange('prompt', e.target.value)}
+                placeholder="Ej. 🤖 Por favor, escribe tu pregunta o consulta y te responderé enseguida:"
+                style={{
+                  width: '100%',
+                  background: '#151d2f',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  padding: '8px',
+                  fontSize: '0.85rem',
+                }}
+              />
+              <span style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '2px', display: 'block' }}>
+                Se envía al usuario para invitarlo a escribir su consulta antes de procesarla.
+              </span>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', marginBottom: '4px' }}>
+                Pregunta o Variable a Consultar (Opcional si es interactivo)
+              </label>
+              <input
+                type="text"
+                value={data.ragQuery || ''}
+                onChange={(e) => handleChange('ragQuery', e.target.value)}
+                placeholder="Ej. {{captura}} o dejar vacío para modo libre"
+                style={{
+                  width: '100%',
+                  background: '#151d2f',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  padding: '8px',
+                  fontSize: '0.85rem',
+                }}
+              />
+              <span style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '2px', display: 'block' }}>
+                Si dejas este campo vacío o en <code style={{ color: '#38bdf8' }}>{`{{captura}}`}</code>, el bot esperará la pregunta del cliente en el chat.
+              </span>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', marginBottom: '4px' }}>
+                Guardar Respuesta en Variable
+              </label>
+              <input
+                type="text"
+                value={data.variableName || 'rag_answer'}
+                onChange={(e) => handleChange('variableName', e.target.value)}
+                placeholder="rag_answer"
+                style={{
+                  width: '100%',
+                  background: '#151d2f',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  color: '#38bdf8',
+                  padding: '8px',
+                  fontSize: '0.85rem',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+              <input
+                type="checkbox"
+                id="sendDirectly"
+                checked={data.sendDirectly !== false}
+                onChange={(e) => handleChange('sendDirectly', e.target.checked)}
+                style={{ cursor: 'pointer', accentColor: '#a855f7' }}
+              />
+              <label htmlFor="sendDirectly" style={{ fontSize: '0.75rem', color: '#cbd5e1', cursor: 'pointer' }}>
+                Enviar respuesta automáticamente a WhatsApp
+              </label>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', marginBottom: '4px' }}>
+                Fragmentos de Contexto (Top-K)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={6}
+                value={data.limit || 3}
+                onChange={(e) => handleChange('limit', parseInt(e.target.value, 10))}
+                style={{
+                  width: '100%',
+                  background: '#151d2f',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  padding: '8px',
+                  fontSize: '0.85rem',
+                }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', marginBottom: '4px' }}>
+                Instrucción de Sistema Personalizada (Opcional)
+              </label>
+              <textarea
+                rows={3}
+                value={data.customPrompt || ''}
+                onChange={(e) => handleChange('customPrompt', e.target.value)}
+                placeholder="Ej. Responde de forma cordial y breve, enfatizando los teléfonos de emergencia..."
+                style={{
+                  width: '100%',
+                  background: '#151d2f',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  color: '#fff',
+                  padding: '8px',
+                  fontSize: '0.8rem',
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* NODO FIN */}
         {nodeType === 'end' && (
           <div>

@@ -248,7 +248,14 @@ export class FlowsService {
   }
 
   async setDefaultFlow(flowId: string, tenantId?: string) {
-    const flow = await this.prisma.flow.findUnique({ where: { id: flowId } });
+    const flow = await this.prisma.flow.findUnique({
+      where: { id: flowId },
+      include: {
+        versions: {
+          orderBy: { versionNumber: 'desc' },
+        },
+      },
+    });
     if (!flow) throw new NotFoundException('Flujo no encontrado');
 
     const effectiveTenantId = tenantId || flow.tenantId;
@@ -257,6 +264,33 @@ export class FlowsService {
       where: { tenantId: effectiveTenantId },
       data: { defaultFlowId: flowId },
     });
+
+    // Asegurar que el flujo tenga activeVersionId si tiene versiones
+    if (!flow.activeVersionId && flow.versions.length > 0) {
+      const bestVersion =
+        flow.versions.find((v) => v.status === 'PUBLISHED') || flow.versions[0];
+      await this.prisma.flow.update({
+        where: { id: flow.id },
+        data: { activeVersionId: bestVersion.id },
+      });
+    }
+
+    // Limpiar palabras universales de saludo de las palabras clave de los flujos de este tenant
+    const universalGreetings = ['hola', 'menu', 'inicio', 'reiniciar', 'reset', 'empezar', 'hi', 'hello'];
+    const allFlows = await this.prisma.flow.findMany({ where: { tenantId: effectiveTenantId } });
+    for (const f of allFlows) {
+      if (Array.isArray(f.triggerKeywords)) {
+        const cleaned = (f.triggerKeywords as string[]).filter(
+          (k) => !universalGreetings.includes(String(k).trim().toLowerCase()),
+        );
+        if (cleaned.length !== f.triggerKeywords.length) {
+          await this.prisma.flow.update({
+            where: { id: f.id },
+            data: { triggerKeywords: cleaned },
+          });
+        }
+      }
+    }
 
     return { success: true, defaultFlowId: flowId, flowName: flow.name };
   }

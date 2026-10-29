@@ -217,9 +217,14 @@ export class WhatsAppService {
   }
 
   /**
-   * Petición HTTP POST genérica hacia Meta Graph API
+   * Petición HTTP POST genérica hacia Meta Graph API con reintentos para fallos transitorios de red/DNS
    */
-  private async postMessage(phoneNumberId: string, accessToken: string, payload: any) {
+  private async postMessage(
+    phoneNumberId: string,
+    accessToken: string,
+    payload: any,
+    maxRetries = 2,
+  ) {
     if (!accessToken || accessToken.startsWith('mock_')) {
       this.logger.log(`[MOCK WHATSAPP OUTBOUND] (${phoneNumberId}) -> A ${payload.to}: [${payload.type}] ${JSON.stringify(payload.text || payload.interactive || payload.contacts)}`);
       return {
@@ -229,18 +234,36 @@ export class WhatsAppService {
       };
     }
 
-    try {
-      const response = await this.http.post(`/${phoneNumberId}/messages`, payload, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      return response.data;
-    } catch (error: any) {
-      const errDetails = error.response?.data?.error || error.message;
-      this.logger.error(`Error enviando mensaje a WhatsApp API (${phoneNumberId}):`, errDetails);
-      throw error;
+    for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+      try {
+        const response = await this.http.post(`/${phoneNumberId}/messages`, payload, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        return response.data;
+      } catch (error: any) {
+        const isNetworkOrDnsError =
+          error.code === 'EAI_AGAIN' ||
+          error.code === 'ETIMEDOUT' ||
+          error.code === 'ECONNRESET' ||
+          error.code === 'ECONNABORTED' ||
+          (error.response?.status && error.response.status >= 500);
+
+        if (attempt <= maxRetries && isNetworkOrDnsError) {
+          const delayMs = attempt * 1000;
+          this.logger.warn(
+            `Error transitorio (${error.code || error.response?.status}) enviando mensaje a WhatsApp API. Reintentando intento ${attempt}/${maxRetries} en ${delayMs}ms...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+
+        const errDetails = error.response?.data?.error || error.message;
+        this.logger.error(`Error enviando mensaje a WhatsApp API (${phoneNumberId}):`, errDetails);
+        throw error;
+      }
     }
   }
 }

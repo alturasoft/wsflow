@@ -10,6 +10,7 @@ import {
   Calendar,
   Mail,
   Headphones,
+  Sparkles,
   StopCircle,
 } from 'lucide-react';
 import { FlowNodeType } from '../types/flow';
@@ -91,6 +92,13 @@ const PALETTE_ITEMS: PaletteItem[] = [
     label: 'Derivación',
     description: 'vCard o Agente Humano',
     icon: <Headphones size={16} />,
+    color: '#a855f7',
+  },
+  {
+    type: 'rag_query',
+    label: 'Consulta RAG / IA',
+    description: 'Búsqueda en PDFs con IA',
+    icon: <Sparkles size={16} />,
     color: '#a855f7',
   },
   {

@@ -24,7 +24,7 @@ export const StartNode: React.FC<NodeProps> = ({ data, selected }) => {
         overflow: 'hidden',
         borderWidth: '1.5px',
         borderStyle: 'solid',
-        transition: 'all 0.2s ease',
+        transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
       }}
     >
       {/* Header del Nodo */}

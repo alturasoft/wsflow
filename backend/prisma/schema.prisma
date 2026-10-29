@@ -35,6 +35,7 @@ model Tenant {
   messages         Message[]
   integrations     Integration[]
   auditLogs        AuditLog[]
+  knowledgeDocuments KnowledgeDocument[]
 
   @@map("tenants")
 }
@@ -314,4 +315,36 @@ model AuditLog {
 
   @@index([tenantId, createdAt])
   @@map("audit_logs")
+}
+
+// ==========================================
+// BASE DE CONOCIMIENTO (RAG / VECTORES)
+// ==========================================
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  INDEXED
+  FAILED
+}
+
+model KnowledgeDocument {
+  id           String         @id @default(uuid())
+  tenantId     String
+  title        String
+  fileName     String
+  fileSize     Int
+  mimeType     String         @default("application/pdf")
+  pageCount    Int            @default(0)
+  chunkCount   Int            @default(0)
+  status       DocumentStatus @default(PENDING)
+  errorMessage String?
+  metadata     Json           @default("{}")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("knowledge_documents")
 }

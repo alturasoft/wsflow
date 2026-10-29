@@ -231,6 +231,50 @@ export const Simulator: React.FC<SimulatorProps> = ({ isOpen, onClose, nodes, ed
         const nextEdge = edges.find((e) => e.source === node.id && (e.sourceHandle === 'success' || !e.sourceHandle || e.sourceHandle !== 'error'));
         activeId = nextEdge ? nextEdge.target : null;
       }
+      // 5.3 Consulta RAG / IA -> Pide pregunta interactivamente o ejecuta si ya hay variable capturada
+      else if (node.type === 'rag_query') {
+        const rawQuery = (data.ragQuery || '').trim();
+        const interpolatedQuery = rawQuery ? interpolate(rawQuery, localVars).trim() : '';
+        const hasPreCaptured = Boolean(interpolatedQuery) && !/\{\{.*\}\}/.test(interpolatedQuery);
+
+        if (!hasPreCaptured) {
+          const promptText = interpolate(
+            data.prompt ||
+              '🤖 *Asistente de Consultas*\nPor favor, escribe tu pregunta o consulta a continuación y te responderé con la información oficial:',
+            localVars,
+          );
+          addBotMessage({ text: promptText });
+          break;
+        }
+
+        try {
+          const res = await fetch(`${API_BASE}/knowledge/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              question: interpolatedQuery,
+              limit: data.limit || 3,
+              customPrompt: data.customPrompt,
+            }),
+          });
+          const ragResult = await res.json();
+          const varName = data.variableName || 'rag_answer';
+          localVars[varName] = ragResult.answer || '';
+          setVariables({ ...localVars });
+
+          if (data.sendDirectly !== false && ragResult.answer) {
+            addBotMessage({ text: ragResult.answer });
+          }
+          addBotMessage({
+            text: '💬 ¿Deseas realizar otra consulta? Escríbela directamente aquí o presiona el botón para terminar:',
+            buttons: [{ id: 'rag_exit', title: 'Finalizar consulta' }],
+          });
+          break;
+        } catch (err: any) {
+          addBotMessage({ text: `⚠️ Error consultando Base de Conocimiento: ${err.message}` });
+          break;
+        }
+      }
       // 6. Handoff -> Envía vCard o notificación de operador
       else if (node.type === 'handoff') {
         if (data.handoffType === 'vcard' && data.contactVCard) {
@@ -264,6 +308,24 @@ export const Simulator: React.FC<SimulatorProps> = ({ isOpen, onClose, nodes, ed
     addUserMessage(buttonTitle);
 
     if (!currentNodeId) return;
+
+    if (buttonId === 'rag_exit') {
+      const nextEdge =
+        edges.find(
+          (e) =>
+            e.source === currentNodeId &&
+            (e.sourceHandle === 'success' || !e.sourceHandle || e.sourceHandle !== 'error'),
+        ) || edges.find((e) => e.source === currentNodeId);
+      if (nextEdge) {
+        setTimeout(() => {
+          executeFlowStep(nextEdge.target, variables);
+        }, 400);
+      } else {
+        addBotMessage({ text: 'Gracias por comunicarte con nosotros. ¡Hasta pronto!' });
+      }
+      return;
+    }
+
     // Buscar conexión que coincida con el sourceHandle del botón
     const matchedEdge = edges.find(
       (e) => e.source === currentNodeId && (!e.sourceHandle || e.sourceHandle === buttonId),
@@ -276,7 +338,7 @@ export const Simulator: React.FC<SimulatorProps> = ({ isOpen, onClose, nodes, ed
     }
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() || !currentNodeId) return;
 
@@ -297,6 +359,63 @@ export const Simulator: React.FC<SimulatorProps> = ({ isOpen, onClose, nodes, ed
         setTimeout(() => {
           executeFlowStep(nextEdge.target, updatedVars);
         }, 500);
+      }
+    } else if (currentNode.type === 'rag_query') {
+      const lower = userText.toLowerCase();
+      const exitWords = [
+        'salir',
+        'terminar',
+        'finalizar',
+        'fin',
+        'no',
+        'no gracias',
+        'gracias',
+        'adios',
+        'adiós',
+        'hasta luego',
+        'hasta pronto',
+        'volver',
+      ];
+      if (exitWords.includes(lower)) {
+        const nextEdge =
+          edges.find(
+            (e) =>
+              e.source === currentNode.id &&
+              (e.sourceHandle === 'success' || !e.sourceHandle || e.sourceHandle !== 'error'),
+          ) || edges.find((e) => e.source === currentNode.id);
+        if (nextEdge) {
+          executeFlowStep(nextEdge.target, variables);
+        } else {
+          addBotMessage({ text: 'Gracias por comunicarte con nosotros. ¡Hasta pronto!' });
+        }
+        return;
+      }
+
+      const data = currentNode.data as unknown as NodeData;
+      try {
+        const res = await fetch(`${API_BASE}/knowledge/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: userText,
+            limit: data.limit || 3,
+            customPrompt: data.customPrompt,
+          }),
+        });
+        const ragResult = await res.json();
+        const varName = data.variableName || 'rag_answer';
+        const updatedVars = { ...variables, captura: userText, [varName]: ragResult.answer || '' };
+        setVariables(updatedVars);
+
+        if (data.sendDirectly !== false && ragResult.answer) {
+          addBotMessage({ text: ragResult.answer });
+        }
+        addBotMessage({
+          text: '💬 ¿Deseas realizar otra consulta? Escríbela directamente aquí o presiona el botón para terminar:',
+          buttons: [{ id: 'rag_exit', title: 'Finalizar consulta' }],
+        });
+      } catch (err: any) {
+        addBotMessage({ text: `⚠️ Error al consultar: ${err.message}` });
       }
     } else {
       const nextEdge = edges.find((e) => e.source === currentNode.id);

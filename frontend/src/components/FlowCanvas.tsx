@@ -4,8 +4,6 @@ import {
   Background,
   Controls,
   MiniMap,
-  useNodesState,
-  useEdgesState,
   addEdge,
   Connection,
   Edge,
@@ -25,6 +23,7 @@ import { ApiCallNode } from './nodes/ApiCallNode';
 import { AppointmentNode } from './nodes/AppointmentNode';
 import { SendEmailNode } from './nodes/SendEmailNode';
 import { HandoffNode } from './nodes/HandoffNode';
+import { RagQueryNode } from './nodes/RagQueryNode';
 import { EndNode } from './nodes/EndNode';
 import { FlowNodeType } from '../types/flow';
 
@@ -39,6 +38,7 @@ const nodeTypes = {
   appointment: AppointmentNode,
   send_email: SendEmailNode,
   handoff: HandoffNode,
+  rag_query: RagQueryNode,
   end: EndNode,
 };
 

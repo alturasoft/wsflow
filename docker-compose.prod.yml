@@ -32,23 +32,41 @@ services:
     networks:
       - wsflow-internal
 
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    container_name: wsflow-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_prod_data:/qdrant/storage
+    networks:
+      - wsflow-internal
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: wsflow-backend
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      qdrant:
+        condition: service_started
     environment:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-wsflow_user}:${POSTGRES_PASSWORD:-wsflow_prod_pass_2026_secure}@postgres:5432/${POSTGRES_DB:-wsflow_db}?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      QDRANT_URL: http://qdrant:6333
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
       JWT_SECRET: ${JWT_SECRET:-wsflow_jwt_secret_prod_key_2026_secure_x9}
       JWT_EXPIRES_IN: 7d
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-e184e62ff18751508db8c46522c7a7bd4c84db8990176d63d6b0b5711c1d48c9}
@@ -100,6 +118,8 @@ volumes:
   postgres_prod_data:
     driver: local
   redis_prod_data:
+    driver: local
+  qdrant_prod_data:
     driver: local
 
 networks:

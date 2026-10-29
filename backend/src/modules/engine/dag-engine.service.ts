@@ -4,6 +4,7 @@ import { RedisService } from '../../common/redis/redis.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { EncryptionService } from '../../common/encryption/encryption.service';
 import { IntegrationsService } from '../integrations/integrations.service';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import axios from 'axios';
 
 export interface DAGNode {
@@ -19,6 +20,7 @@ export interface DAGNode {
     | 'appointment'
     | 'send_email'
     | 'handoff'
+    | 'rag_query'
     | 'end';
   data: any;
 }
@@ -46,6 +48,7 @@ export class DagEngineService {
     private readonly whatsapp: WhatsAppService,
     private readonly encryption: EncryptionService,
     private readonly integrations: IntegrationsService,
+    private readonly knowledge: KnowledgeService,
   ) {}
 
   /**
@@ -185,7 +188,36 @@ export class DagEngineService {
 
     if (!isInteractiveReply && session && session.status === 'BOT_ACTIVE' && textBody) {
       const lower = textBody.trim().toLowerCase();
-      const isResetWord = ['hola', 'menu', 'inicio', 'reiniciar', 'reset', 'empezar'].includes(lower);
+      const currentNodeInSession = session.definition?.nodes?.find(
+        (n: any) => n.id === session.currentNodeId,
+      );
+      const isWaitingFreeText =
+        currentNodeInSession?.type === 'rag_query' ||
+        currentNodeInSession?.type === 'capture';
+
+      const isResetWord = isWaitingFreeText
+        ? ['hola', 'menu', 'menú', 'inicio', 'reiniciar', 'reset'].includes(lower)
+        : [
+            'hola',
+            'hola!',
+            '¡hola!',
+            'buenas',
+            'buenos dias',
+            'buenos días',
+            'buenas tardes',
+            'buenas noches',
+            'menu',
+            'menú',
+            'inicio',
+            'reiniciar',
+            'reset',
+            'empezar',
+            'comenzar',
+            'hi',
+            'hello',
+          ].includes(lower) ||
+          lower.startsWith('hola') ||
+          lower.startsWith('buen');
 
       // Verificar si el mensaje coincide estrictamente con palabras clave de algún OTRO flujo del tenant
       const keywordFlow = await this.findFlowByKeyword(tenantId, textBody);
@@ -419,6 +451,146 @@ export class DagEngineService {
       if (outgoingEdge) {
         nextNodeId = outgoingEdge.target;
       }
+    }
+    // C) Si el nodo actual es Consulta RAG / IA (modo conversacional interactivo):
+    else if (currentNode.type === 'rag_query') {
+      const lowerText = (textBody || '').trim().toLowerCase();
+      const exitWords = [
+        'salir',
+        'terminar',
+        'finalizar',
+        'fin',
+        'no',
+        'no gracias',
+        'gracias',
+        'adios',
+        'adiós',
+        'hasta luego',
+        'hasta pronto',
+        'volver',
+      ];
+      const isExitAction =
+        buttonReplyId === 'rag_exit' || exitWords.includes(lowerText);
+
+      if (isExitAction) {
+        const successEdge =
+          definition.edges.find(
+            (e) =>
+              e.source === currentNode.id &&
+              (e.sourceHandle === 'success' || !e.sourceHandle || e.sourceHandle !== 'error'),
+          ) || definition.edges.find((e) => e.source === currentNode.id);
+
+        if (successEdge) {
+          nextNodeId = successEdge.target;
+        } else {
+          await this.whatsapp.sendText(
+            phoneNumberId,
+            accessToken,
+            from,
+            'Gracias por comunicarte con nosotros. ¡Hasta pronto!',
+          );
+          session.status = 'CLOSED';
+          await this.prisma.conversation.update({
+            where: { id: session.conversationId },
+            data: { status: 'CLOSED' },
+          });
+          await this.redis.deleteSession(tenantId, from);
+          return;
+        }
+      } else {
+        // El usuario envió una pregunta para la Base de Conocimiento / IA
+        const questionText = (textBody || '').trim();
+        if (!questionText) {
+          await this.whatsapp.sendText(
+            phoneNumberId,
+            accessToken,
+            from,
+            'Por favor escribe tu pregunta o consulta:',
+          );
+          return;
+        }
+
+        const varName = currentNode.data?.variableName || 'rag_answer';
+        const sendDirectly = currentNode.data?.sendDirectly !== false;
+        const customPrompt = currentNode.data?.customPrompt;
+
+        try {
+          const ragResult = await this.knowledge.queryKnowledge({
+            tenantId,
+            question: questionText,
+            limit: Number(currentNode.data?.limit) || 3,
+            companyName: account.tenant?.name,
+            customPrompt,
+          });
+
+          session.variables['captura'] = questionText;
+          session.variables[varName] = ragResult.answer;
+          session.variables[`${varName}_sources`] = ragResult.sources;
+
+          if (sendDirectly && ragResult.answer) {
+            await this.whatsapp.sendText(
+              phoneNumberId,
+              accessToken,
+              from,
+              ragResult.answer,
+            );
+            await this.recordBotMessage(tenantId, session.conversationId, {
+              text: ragResult.answer,
+            });
+          }
+
+          // Mantenerse en el nodo RAG para permitir más preguntas o finalizar con botón
+          try {
+            const followUpText =
+              '💬 ¿Deseas realizar otra consulta? Escríbela directamente aquí o presiona el botón para terminar:';
+            const exitButtons = [{ id: 'rag_exit', title: 'Finalizar consulta' }];
+            await this.whatsapp.sendButtons(
+              phoneNumberId,
+              accessToken,
+              from,
+              followUpText,
+              exitButtons,
+            );
+            await this.recordBotMessage(tenantId, session.conversationId, {
+              text: followUpText,
+              buttons: exitButtons,
+            });
+          } catch (btnErr: any) {
+            this.logger.warn(`No se pudieron enviar botones de salida RAG, enviando texto plano: ${btnErr.message}`);
+            const textFollowUp = '💬 ¿Deseas realizar otra consulta? Escríbela aquí o escribe "salir" para terminar.';
+            await this.whatsapp.sendText(phoneNumberId, accessToken, from, textFollowUp);
+          }
+
+          await this.redis.saveSession(tenantId, from, session);
+          await this.prisma.conversation.update({
+            where: { id: session.conversationId },
+            data: {
+              currentNodeId: session.currentNodeId,
+              status: session.status,
+              variables: session.variables,
+              lastMessageAt: new Date(),
+            },
+          });
+          return;
+        } catch (err: any) {
+          this.logger.error(`Error ejecutando consulta en nodo rag_query: ${err.message}`);
+          session.variables[`${varName}_error`] = err.message;
+          const errorEdge = definition.edges.find(
+            (e) => e.source === currentNode.id && e.sourceHandle === 'error',
+          );
+          if (errorEdge) {
+            nextNodeId = errorEdge.target;
+          } else {
+            await this.whatsapp.sendText(
+              phoneNumberId,
+              accessToken,
+              from,
+              'Por el momento no pude consultar esa información. Si deseas, escribe tu consulta de otra manera o puedo comunicarte con un asesor ejecutivo.',
+            );
+            return;
+          }
+        }
+      }
     } else {
       // Por defecto, seguir la arista de salida
       const defaultEdge = definition.edges.find((e) => e.source === currentNode.id);
@@ -625,6 +797,89 @@ export class DagEngineService {
           currentId = errorEdge ? errorEdge.target : null;
         }
       }
+      // 9. NODO CONSULTA RAG / BASE DE CONOCIMIENTO (INTERACTIVO + AUTOMÁTICO)
+      else if (node.type === 'rag_query') {
+        const rawQueryConfig = (node.data?.ragQuery || node.data?.query || '').trim();
+        const interpolatedQuery = rawQueryConfig
+          ? this.interpolate(rawQueryConfig, session.variables).trim()
+          : '';
+
+        // Verificar si ya existe una consulta pre-capturada válida (sin variables {{...}} sin resolver)
+        const hasPreCapturedQuestion =
+          Boolean(interpolatedQuery) && !/\{\{.*\}\}/.test(interpolatedQuery);
+
+        if (!hasPreCapturedQuestion) {
+          // Modo interactivo: Solicitar la pregunta al usuario y esperar su respuesta
+          const promptText = this.interpolate(
+            node.data?.prompt ||
+              '🤖 *Asistente de Consultas*\nPor favor, escribe tu pregunta o consulta a continuación y te responderé con la información oficial:',
+            session.variables,
+          );
+          await this.whatsapp.sendText(phoneNumberId, accessToken, to, promptText);
+          await this.recordBotMessage(tenantId, session.conversationId, {
+            text: promptText,
+          });
+          break;
+        }
+
+        const varName = node.data?.variableName || 'rag_answer';
+        const sendDirectly = node.data?.sendDirectly !== false;
+        const customPrompt = node.data?.customPrompt;
+
+        try {
+          const ragResult = await this.knowledge.queryKnowledge({
+            tenantId,
+            question: interpolatedQuery,
+            limit: Number(node.data?.limit) || 3,
+            customPrompt,
+          });
+
+          session.variables[varName] = ragResult.answer;
+          session.variables[`${varName}_sources`] = ragResult.sources;
+
+          if (sendDirectly && ragResult.answer) {
+            await this.whatsapp.sendText(
+              phoneNumberId,
+              accessToken,
+              to,
+              ragResult.answer,
+            );
+            await this.recordBotMessage(tenantId, session.conversationId, {
+              text: ragResult.answer,
+            });
+          }
+
+          // Permitir al usuario hacer otra pregunta o finalizar
+          try {
+            const followUpText =
+              '💬 ¿Deseas realizar otra consulta? Escríbela directamente aquí o presiona el botón para terminar:';
+            const exitButtons = [{ id: 'rag_exit', title: 'Finalizar consulta' }];
+            await this.whatsapp.sendButtons(
+              phoneNumberId,
+              accessToken,
+              to,
+              followUpText,
+              exitButtons,
+            );
+            await this.recordBotMessage(tenantId, session.conversationId, {
+              text: followUpText,
+              buttons: exitButtons,
+            });
+          } catch (btnErr: any) {
+            this.logger.warn(`No se pudieron enviar botones RAG, continuando: ${btnErr.message}`);
+          }
+          break;
+        } catch (err: any) {
+          this.logger.error(`Error ejecutando nodo rag_query: ${err.message}`);
+          session.variables[`${varName}_error`] = err.message;
+          const errorEdge = definition.edges.find(
+            (e) => e.source === node.id && e.sourceHandle === 'error',
+          );
+          currentId = errorEdge
+            ? errorEdge.target
+            : (definition.edges.find((e) => e.source === node.id)?.target || null);
+        }
+      }
       // 9. NODO HANDOFF / DERIVACIÓN
       else if (node.type === 'handoff') {
         const handoffType = node.data?.handoffType || 'vcard';
@@ -717,77 +972,165 @@ export class DagEngineService {
     });
   }
 
+  private async getPublishedFlowById(flowId: string) {
+    const flow = await this.prisma.flow.findUnique({
+      where: { id: flowId },
+      include: {
+        versions: {
+          orderBy: { versionNumber: 'desc' },
+        },
+      },
+    });
+
+    if (!flow || !flow.versions || flow.versions.length === 0) return null;
+
+    // Priorizar la versión activa o la última versión publicada
+    const publishedVersion =
+      flow.versions.find(
+        (v) => (flow.activeVersionId && v.id === flow.activeVersionId) || v.status === 'PUBLISHED',
+      ) || flow.versions[0];
+
+    return { id: flow.id, activeVersion: publishedVersion };
+  }
+
   private async findFlowByKeyword(tenantId: string, text?: string) {
     if (!text) return null;
     const lower = text.trim().toLowerCase();
+
+    // Palabras universales de saludo/menú que NUNCA deben disparar flujos específicos secundarios
+    const universalWords = new Set([
+      'hola',
+      'hola!',
+      '¡hola!',
+      'buenas',
+      'buenos dias',
+      'buenos días',
+      'buenas tardes',
+      'buenas noches',
+      'menu',
+      'menú',
+      'inicio',
+      'reiniciar',
+      'reset',
+      'empezar',
+      'comenzar',
+      'hi',
+      'hello',
+      'start',
+    ]);
+
+    if (universalWords.has(lower)) {
+      return null;
+    }
+
     const allFlows = await this.prisma.flow.findMany({
       where: { tenantId, isActive: true },
       include: {
         versions: {
-          where: { status: 'PUBLISHED' },
           orderBy: { versionNumber: 'desc' },
-          take: 1,
         },
       },
+      orderBy: { updatedAt: 'desc' },
     });
+
+    const wordsInText = lower.split(/\s+/);
 
     const matchedFlow = allFlows.find((f) => {
       const keywords = Array.isArray(f.triggerKeywords) ? (f.triggerKeywords as string[]) : [];
       return keywords.some((kw) => {
         const k = String(kw).trim().toLowerCase();
-        if (!k) return false;
-        return lower === k || lower.split(/\s+/).includes(k) || lower.includes(k);
+        if (!k || universalWords.has(k)) return false;
+        return lower === k || wordsInText.includes(k);
       });
     });
 
     if (matchedFlow && matchedFlow.versions.length > 0) {
-      return { id: matchedFlow.id, activeVersion: matchedFlow.versions[0] };
+      const activeVersion =
+        matchedFlow.versions.find(
+          (v) =>
+            (matchedFlow.activeVersionId && v.id === matchedFlow.activeVersionId) ||
+            v.status === 'PUBLISHED',
+        ) || matchedFlow.versions[0];
+
+      return { id: matchedFlow.id, activeVersion };
     }
 
     return null;
   }
 
   private async resolveInitialFlow(tenantId: string, defaultFlowId?: string | null, text?: string) {
-    // 1. Si el usuario envió una palabra clave (trigger keyword) de algún flujo:
-    if (text) {
-      const keywordFlow = await this.findFlowByKeyword(tenantId, text);
+    const rawText = (text || '').trim();
+    const lower = rawText.toLowerCase();
+
+    // Palabras estándar de saludo y reinicio de conversación
+    const isGreetingOrReset =
+      [
+        'hola',
+        'buenas',
+        'buenos dias',
+        'buenos días',
+        'buenas tardes',
+        'buenas noches',
+        'menu',
+        'menú',
+        'inicio',
+        'reiniciar',
+        'reset',
+        'empezar',
+        'comenzar',
+        'hi',
+        'hello',
+        'start',
+      ].includes(lower) ||
+      lower.startsWith('hola') ||
+      lower.startsWith('buen');
+
+    // 1. Si es saludo o reinicio general, la prioridad es SIEMPRE el Flujo por Defecto
+    if (isGreetingOrReset && defaultFlowId) {
+      const defaultFlow = await this.getPublishedFlowById(defaultFlowId);
+      if (defaultFlow) {
+        this.logger.log(
+          `Iniciando Flujo por Defecto ("${defaultFlow.id}") ante saludo/reinicio ("${rawText}").`,
+        );
+        return defaultFlow;
+      }
+    }
+
+    // 2. Si el usuario envió un mensaje con palabra clave temática específica (no saludo genérico):
+    if (rawText && !isGreetingOrReset) {
+      const keywordFlow = await this.findFlowByKeyword(tenantId, rawText);
       if (keywordFlow) {
         this.logger.log(`Iniciando flujo id: "${keywordFlow.id}" por coincidencia de palabra clave.`);
         return keywordFlow;
       }
     }
 
-    // 2. Si no coincide ninguna palabra clave, usar el flujo por defecto:
+    // 3. Flujo por Defecto asignado al número de WhatsApp
     if (defaultFlowId) {
-      const flow = await this.prisma.flow.findUnique({
-        where: { id: defaultFlowId },
-        include: {
-          versions: {
-            where: { status: 'PUBLISHED' },
-            orderBy: { versionNumber: 'desc' },
-            take: 1,
-          },
-        },
-      });
-      if (flow && flow.versions.length > 0) {
-        return { id: flow.id, activeVersion: flow.versions[0] };
+      const defaultFlow = await this.getPublishedFlowById(defaultFlowId);
+      if (defaultFlow) {
+        return defaultFlow;
       }
     }
 
-    // 3. Fallback: buscar cualquier flujo activo para este tenant
+    // 4. Fallback: buscar el flujo activo más recientemente actualizado para este tenant
     const flow = await this.prisma.flow.findFirst({
       where: { tenantId, isActive: true },
       include: {
         versions: {
-          where: { status: 'PUBLISHED' },
           orderBy: { versionNumber: 'desc' },
-          take: 1,
         },
       },
+      orderBy: { updatedAt: 'desc' },
     });
 
     if (flow && flow.versions.length > 0) {
-      return { id: flow.id, activeVersion: flow.versions[0] };
+      const activeVersion =
+        flow.versions.find(
+          (v) => (flow.activeVersionId && v.id === flow.activeVersionId) || v.status === 'PUBLISHED',
+        ) || flow.versions[0];
+
+      return { id: flow.id, activeVersion };
     }
 
     return null;

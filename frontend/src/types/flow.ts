@@ -9,6 +9,7 @@ export type FlowNodeType =
   | 'appointment'
   | 'send_email'
   | 'handoff'
+  | 'rag_query'
   | 'end';
 
 export interface ButtonItem {
@@ -85,6 +86,11 @@ export interface NodeData {
   handoffType?: 'vcard' | 'inbox' | 'email';
   contactVCard?: ContactVCardData;
   destinationEmail?: string;
+  // RAG / Base de Conocimiento
+  ragQuery?: string;
+  sendDirectly?: boolean;
+  customPrompt?: string;
+  limit?: number;
   // End
   closingMessage?: string;
 }
@@ -127,6 +133,14 @@ export interface Tenant {
   id: string;
   name: string;
   slug: string;
+  status?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  settings?: {
+    timezone?: string;
+    language?: string;
+    operationalMode?: 'ACTIVE' | 'DEVELOPMENT' | 'INACTIVE';
+    description?: string;
+    [key: string]: any;
+  };
   whatsappAccounts: Array<{
     id: string;
     name: string;
@@ -134,5 +148,6 @@ export interface Tenant {
     phoneNumberId: string;
     isActive: boolean;
     defaultFlowId?: string | null;
+    wabaId?: string;
   }>;
 }

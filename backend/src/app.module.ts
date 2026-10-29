@@ -8,6 +8,8 @@ import { EngineModule } from './modules/engine/engine.module';
 import { FlowsModule } from './modules/flows/flows.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
+import { KnowledgeModule } from './modules/knowledge/knowledge.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -24,6 +26,8 @@ import { AppController } from './app.controller';
     FlowsModule,
     ConversationsModule,
     IntegrationsModule,
+    KnowledgeModule,
+    AuthModule,
   ],
   controllers: [AppController],
 })
